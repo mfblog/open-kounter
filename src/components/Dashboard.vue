@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import CounterList from './dashboard/CounterList.vue'
 import DataBackup from './dashboard/DataBackup.vue'
 import DomainConfig from './dashboard/DomainConfig.vue'
+import OidcManager from './dashboard/OidcManager.vue'
 import PasskeyManager from './dashboard/PasskeyManager.vue'
 import SingleCounterManager from './dashboard/SingleCounterManager.vue'
 import TotalStats from './dashboard/TotalStats.vue'
@@ -44,6 +45,8 @@ const handleFullRefresh = () => {
       />
 
       <PasskeyManager :token="token" />
+
+      <OidcManager :token="token" />
       
       <DomainConfig 
         ref="domainConfigRef" 
