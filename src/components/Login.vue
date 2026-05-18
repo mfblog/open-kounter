@@ -10,33 +10,29 @@ const message = ref('')
 const username = ref('admin')
 const hasLegacyData = ref(false)
 const migrationLoading = ref(false)
+const oidcLoginEnabled = ref(false)
+const passkeyLoginEnabled = ref(false)
+const checkingStatus = ref(true)
 
 const checkInitStatus = async () => {
   try {
-    // Try to auth with a dummy token to check if system is initialized
     const res = await fetch('/api/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: 'check_init' })
+      body: JSON.stringify({ action: 'get_status' })
     })
     const data = await res.json()
-    // Check if system is not initialized
-    if (data.code !== 0 && data.message === 'Not initialized') {
-      isInitialized.value = false
+    if (data.code === 0) {
+      isInitialized.value = !!data.data.initialized
+      oidcLoginEnabled.value = !!data.data.oidcLoginEnabled
     } else {
-      isInitialized.value = true
+      isInitialized.value = false
     }
   } catch (e) {
     console.error(e)
-    // On error, assume not initialized to be safe
     isInitialized.value = false
   }
 }
-
-onMounted(() => {
-  checkInitStatus()
-  checkLegacyStatus()
-})
 
 const checkLegacyStatus = async () => {
   try {
@@ -52,6 +48,37 @@ const checkLegacyStatus = async () => {
     hasLegacyData.value = false
   }
 }
+
+const checkPasskeyStatus = async () => {
+  try {
+    const res = await fetch('/api/passkey', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'listCredentials', data: { username: 'admin' } })
+    })
+    const data = await res.json()
+    if (data.code === 0 && data.data && data.data.length > 0) {
+      passkeyLoginEnabled.value = true
+    }
+  } catch (e) {
+    console.error('Passkey status check error:', e)
+  }
+}
+
+onMounted(async () => {
+  checkingStatus.value = true
+  const startTime = Date.now()
+  await Promise.all([
+    checkInitStatus(),
+    checkLegacyStatus(),
+    checkPasskeyStatus()
+  ])
+  const elapsed = Date.now() - startTime
+  if (elapsed < 600) {
+    await new Promise(resolve => setTimeout(resolve, 600 - elapsed))
+  }
+  checkingStatus.value = false
+})
 
 const handleSubmit = async () => {
   if (!tokenInput.value) return
@@ -92,6 +119,11 @@ const handleSubmit = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// OIDC 登录
+const handleOidcLogin = () => {
+  window.location.href = '/api/oidc/login?mode=login'
 }
 
 // Passkey 登录
@@ -265,11 +297,21 @@ function base64URLDecode(base64url) {
     </div>
 
     <!-- Card -->
-    <div class="bg-dark-800/50 backdrop-blur-xl rounded-2xl shadow-2xl border border-dark-700/50 p-8 relative overflow-hidden group">
+    <div class="bg-dark-800/50 backdrop-blur-xl rounded-2xl shadow-2xl border border-dark-700/50 p-8 relative overflow-hidden group min-h-[320px] flex flex-col justify-center">
       <!-- Decorative gradient blob -->
       <div class="absolute -top-24 -right-24 w-48 h-48 bg-primary/10 rounded-full blur-3xl group-hover:bg-primary/20 transition-colors duration-500"></div>
       
-      <div class="relative space-y-6">
+      <!-- Loading State -->
+      <div v-if="checkingStatus" class="flex flex-col items-center justify-center space-y-6 animate-fade-in z-10">
+        <div class="flex space-x-3">
+          <div class="w-3.5 h-3.5 bg-primary rounded-full animate-bounce shadow-[0_0_10px_rgba(99,102,241,0.6)]" style="animation-delay: -0.3s"></div>
+          <div class="w-3.5 h-3.5 bg-purple-500 rounded-full animate-bounce shadow-[0_0_10px_rgba(168,85,247,0.6)]" style="animation-delay: -0.15s"></div>
+          <div class="w-3.5 h-3.5 bg-blue-500 rounded-full animate-bounce shadow-[0_0_10px_rgba(59,130,246,0.6)]"></div>
+        </div>
+        <p class="text-sm font-medium text-gray-400 tracking-wider">正在检测登录环境...</p>
+      </div>
+
+      <div v-else class="relative space-y-6 animate-fade-in">
         <div class="space-y-2">
           <label class="text-sm font-medium text-gray-300 ml-1">管理员 Token</label>
           <div class="relative">
@@ -324,7 +366,7 @@ function base64URLDecode(base64url) {
         </p>
 
         <!-- Passkey 登录 -->
-        <div v-if="isInitialized" class="relative">
+        <div v-if="isInitialized && (passkeyLoginEnabled || oidcLoginEnabled)" class="relative">
           <div class="absolute inset-0 flex items-center">
             <div class="w-full border-t border-dark-600"></div>
           </div>
@@ -334,7 +376,7 @@ function base64URLDecode(base64url) {
         </div>
 
         <button 
-          v-if="isInitialized"
+          v-if="isInitialized && passkeyLoginEnabled"
           @click="handlePasskeyLogin" 
           :disabled="loading"
           class="w-full py-3.5 bg-dark-700/50 hover:bg-dark-700 border border-dark-600 hover:border-green-500/50 text-white font-medium rounded-xl shadow-lg hover:shadow-green-500/20 transform hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none flex items-center justify-center gap-2"
@@ -343,6 +385,19 @@ function base64URLDecode(base64url) {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
           <span>使用 Passkey 登录</span>
+        </button>
+
+        <!-- OIDC 登录 -->
+        <button 
+          v-if="isInitialized && oidcLoginEnabled"
+          @click="handleOidcLogin" 
+          :disabled="loading"
+          class="w-full py-3.5 bg-dark-700/50 hover:bg-dark-700 border border-dark-600 hover:border-blue-500/50 text-white font-medium rounded-xl shadow-lg hover:shadow-blue-500/20 transform hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none flex items-center justify-center gap-2"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+          <span>使用 OIDC 登录</span>
         </button>
         
         <div 

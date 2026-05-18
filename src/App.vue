@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -8,6 +8,8 @@ const router = useRouter()
 const token = ref(localStorage.getItem('open_kounter_token') || '')
 const isLoggedIn = ref(false)
 const isLoading = ref(true)
+
+const oidcMessage = ref('')
 
 const handleLogin = (newToken) => {
   token.value = newToken
@@ -27,6 +29,50 @@ const isNotFoundPage = computed(() => route.name === 'NotFound')
 onMounted(async () => {
   // 等待路由就绪，防止 404 页面判定错误
   await router.isReady()
+
+  // 处理 OIDC 回调参数
+  const urlParams = new URLSearchParams(window.location.search)
+  const oidcSession = urlParams.get('oidc_session')
+  const oidcBound = urlParams.get('oidc_bound')
+  const oidcError = urlParams.get('oidc_error')
+
+  // 清理 URL 参数
+  if (oidcSession || oidcBound || oidcError) {
+    window.history.replaceState({}, '', '/')
+  }
+
+  if (oidcError) {
+    oidcMessage.value = `OIDC 错误: ${decodeURIComponent(oidcError)}`
+    isLoading.value = false
+    return
+  }
+
+  if (oidcBound === 'true') {
+    oidcMessage.value = 'OIDC 身份绑定成功！'
+    // 绑定成功后，用户应该还是已登录状态（token 在 localStorage 中）
+  }
+
+  if (oidcSession) {
+    // 用 OIDC session 换取实际 token
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'oidc_verify', oidcSession })
+      })
+      const data = await res.json()
+      if (data.code === 0 && data.data.token) {
+        handleLogin(data.data.token)
+        isLoading.value = false
+        return
+      } else {
+        oidcMessage.value = data.message || 'OIDC 登录失败'
+      }
+    } catch (e) {
+      console.error('OIDC session verify error:', e)
+      oidcMessage.value = 'OIDC 登录验证失败'
+    }
+  }
   
   if (token.value) {
     try {
@@ -92,6 +138,21 @@ onMounted(async () => {
       </header>
       
       <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- OIDC 消息提示 -->
+        <div 
+          v-if="oidcMessage && !isLoggedIn" 
+          class="mb-6 max-w-md mx-auto p-4 rounded-xl text-sm text-center flex items-center justify-center gap-2"
+          :class="oidcMessage.includes('成功') ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'"
+        >
+          <svg v-if="oidcMessage.includes('成功')" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {{ oidcMessage }}
+        </div>
+
         <router-view v-slot="{ Component }">
           <transition
             enter-active-class="transition ease-out duration-200"
