@@ -31,3 +31,7 @@ dist-ssr
 
 # EdgeOne
 .edgeone
+
+# Skills 文件
+.agent
+.codebuddy
