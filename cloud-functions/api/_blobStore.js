@@ -4,7 +4,6 @@ const DEFAULT_STORE_NAME = 'open-kounter'
 const STRONG_CONSISTENCY = 'strong'
 const SYSTEM_STATE_KEY = 'system/state.json'
 const COUNTERS_DOC_KEY = 'system/counters.json'
-const COUNTERS_PREFIX = 'counters/'
 const PASSKEY_USERS_PREFIX = 'passkey/users/'
 const PASSKEY_CREDENTIALS_PREFIX = 'passkey/credentials/'
 const PASSKEY_CHALLENGES_PREFIX = 'passkey/challenges/'
@@ -113,16 +112,9 @@ export async function loadCountersDocument(store) {
     return normalizeCountersDocument(existing)
   }
 
-  return withBlobLock(store, `${LOCKS_PREFIX}counters-bootstrap.json`, async () => {
-    const current = await readJson(store, COUNTERS_DOC_KEY)
-    if (current) {
-      return normalizeCountersDocument(current)
-    }
-
-    const migrated = await migrateLegacyCounterBlobs(store)
-    await writeJson(store, COUNTERS_DOC_KEY, migrated)
-    return migrated
-  })
+  const empty = createEmptyCountersDocument()
+  await writeJson(store, COUNTERS_DOC_KEY, empty, { onlyIfNew: true })
+  return empty
 }
 
 export async function saveCountersDocument(store, document) {
@@ -133,19 +125,11 @@ export async function saveCountersDocument(store, document) {
 
 export async function updateCountersDocument(store, updater) {
   return withBlobLock(store, `${LOCKS_PREFIX}counters-document.json`, async () => {
-    const current = normalizeCountersDocument((await readJson(store, COUNTERS_DOC_KEY)) || (await migrateLegacyCounterBlobs(store)))
+    const current = normalizeCountersDocument((await readJson(store, COUNTERS_DOC_KEY)) || createEmptyCountersDocument())
     const next = normalizeCountersDocument(await updater(current))
     await saveCountersDocument(store, next)
     return next
   })
-}
-
-export function counterBlobKey(target) {
-  return `${COUNTERS_PREFIX}${encodeKeySegment(target)}.json`
-}
-
-export function counterLockKey(target) {
-  return `${LOCKS_PREFIX}counters/${encodeKeySegment(target)}.json`
 }
 
 export function passkeyUserKey(userId) {
@@ -344,46 +328,14 @@ export function decodeKeySegment(value) {
   return decodeURIComponent(value)
 }
 
-export function decodeCounterTargetFromKey(key) {
-  if (!key.startsWith(COUNTERS_PREFIX) || !key.endsWith('.json')) {
-    return null
-  }
-  const encoded = key.slice(COUNTERS_PREFIX.length, -'.json'.length)
-  return decodeKeySegment(encoded)
-}
-
 export function getStoragePrefixes() {
   return {
-    counters: COUNTERS_PREFIX,
     countersDocument: COUNTERS_DOC_KEY,
     passkeyUsers: PASSKEY_USERS_PREFIX,
     passkeyCredentials: PASSKEY_CREDENTIALS_PREFIX,
     passkeyChallenges: PASSKEY_CHALLENGES_PREFIX,
     passkeyManagementTokens: PASSKEY_MANAGEMENT_TOKENS_PREFIX
   }
-}
-
-async function migrateLegacyCounterBlobs(store) {
-  const result = await store.list({ prefix: COUNTERS_PREFIX, consistency: STRONG_CONSISTENCY })
-  const blobs = result.blobs || []
-  if (blobs.length === 0) {
-    return createEmptyCountersDocument()
-  }
-
-  const entries = await Promise.all(blobs.map(async ({ key }) => {
-    const target = decodeCounterTargetFromKey(key)
-    if (!target) {
-      return null
-    }
-    const value = await readJson(store, key)
-    return [target, normalizeCounterRecord(target, value)]
-  }))
-
-  return normalizeCountersDocument({
-    items: Object.fromEntries(entries.filter((entry) => entry && entry[1])),
-    updatedAt: Date.now(),
-    version: '2.1'
-  })
 }
 
 function generateRequestId() {
